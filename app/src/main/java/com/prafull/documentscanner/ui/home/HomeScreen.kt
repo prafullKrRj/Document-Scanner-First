@@ -1,4 +1,4 @@
-package com.prafull.documentscanner.home
+package com.prafull.documentscanner.ui.home
 
 import android.app.Activity
 import android.app.Activity.RESULT_OK
@@ -18,6 +18,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -27,12 +29,14 @@ import androidx.compose.ui.unit.dp
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
-import com.prafull.documentscanner.PdfViewModel
 import com.prafull.documentscanner.R
-import com.prafull.documentscanner.home.components.PdfLayout
-import com.prafull.documentscanner.home.components.RenameDeleteDialog
-import com.prafull.documentscanner.models.PdfEntity
-import com.prafull.documentscanner.showToasts
+import com.prafull.documentscanner.Utils.copyPdfFileToAppDirectory
+import com.prafull.documentscanner.Utils.getFileSize
+import com.prafull.documentscanner.Utils.showToasts
+import com.prafull.documentscanner.ui.home.components.PdfLayout
+import com.prafull.documentscanner.ui.home.components.RenameDeleteDialog
+import com.prafull.documentscanner.data.models.PdfEntity
+import com.prafull.documentscanner.ui.PdfViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -45,22 +49,28 @@ fun HomeScreen(viewModel: PdfViewModel) {
     RenameDeleteDialog(viewModel = viewModel)
     val activity = LocalContext.current as Activity
     val context = LocalContext.current
-    val pdfList = remember {
-        mutableListOf<PdfEntity>()
-    }
+    val pdfList by viewModel.pdfStateFlow.collectAsState()
 
-    val scannerLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        if (result.resultCode == RESULT_OK) {
-            val scannerData = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
-            scannerData?.pdf?.let { pdf ->
-                Log.d("PDF", pdf.uri.lastPathSegment.toString())
-                val date = Date()
-                val fileName = SimpleDateFormat("dd-MMM-yyyy HH:mm:ss", Locale.getDefault()).format(date) + ".pdf"
-                val pdfEntity = PdfEntity(UUID.randomUUID().toString(), fileName, "10KB", date)
-                pdfList.add(pdfEntity)
+    val scannerLauncher =
+        rememberLauncherForActivityResult(contract = ActivityResultContracts.StartIntentSenderForResult()) { result ->
+            if (result.resultCode == RESULT_OK) {
+                val scannerData = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
+                scannerData?.pdf?.let { pdf ->
+                    Log.d("PDF", pdf.uri.lastPathSegment.toString())
+                    val date = Date()
+                    val fileName = SimpleDateFormat(
+                            "dd-MMM-yyyy HH:mm:ss",
+                            Locale.getDefault()
+                    ).format(date) + ".pdf"
+
+                    // Copy the pdf file to app directory
+                    copyPdfFileToAppDirectory(context, pdf.uri, fileName)
+
+                    val pdfEntity = PdfEntity(UUID.randomUUID().toString(), fileName, getFileSize(context, fileName), date)
+                    viewModel.insertPdf(pdfEntity)
+                }
             }
         }
-    }
     val scanner = remember {
         GmsDocumentScanning.getClient(
                 GmsDocumentScannerOptions.Builder()
@@ -70,31 +80,34 @@ fun HomeScreen(viewModel: PdfViewModel) {
                     .build()
         )
     }
-    Scaffold (
+    Scaffold(
             topBar = {
                 CenterAlignedTopAppBar(title = {
                     Text(text = stringResource(id = R.string.app_name))
                 })
             },
-            floatingActionButton =  {
+            floatingActionButton = {
                 ExtendedFloatingActionButton(onClick = {
                     scanner.getStartScanIntent(activity).addOnSuccessListener { it: IntentSender? ->
                         it?.let { it1 -> IntentSenderRequest.Builder(it1).build() }?.let { it2 ->
-                            scannerLauncher.launch (
+                            scannerLauncher.launch(
                                     it2
                             )
                         }
                     }
                         .addOnFailureListener {
                             it.printStackTrace()
-                            context.showToasts(it.localizedMessage?:"")
+                            context.showToasts(it.localizedMessage ?: "")
                         }
                 }) {
                     Text(text = stringResource(R.string.scan))
-                    Icon(painter = painterResource(id = R.drawable.baseline_camera_alt_24), contentDescription = "Scan Document")
+                    Icon(
+                            painter = painterResource(id = R.drawable.baseline_camera_alt_24),
+                            contentDescription = "Scan Document"
+                    )
                 }
             }
-    ){  paddingValues ->
+    ) { paddingValues ->
         if (pdfList.isEmpty()) {
             Text(text = "No pdf", modifier = Modifier.padding(paddingValues))
         } else {
